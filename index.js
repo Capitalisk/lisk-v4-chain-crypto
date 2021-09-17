@@ -5,6 +5,10 @@ class LiskChainCrypto {
   constructor({chainOptions}) {
     this.passphrase = chainOptions.passphrase;
     this.sharedPassphrase = chainOptions.sharedPassphrase;
+    this.latestTimestamp = null;
+    this.nonceIndex = 0;
+    // Transaction messages can be used as unique identifiers when the ID is not known.
+    this.recentTransactionMessageSet = new Set();
   }
 
   async load() {}
@@ -25,10 +29,6 @@ class LiskChainCrypto {
     return liskCryptography.verifyData(txnHash, signatureToVerify, publicKey);
   }
 
-  _computeNonceFromTimestamp(timestamp) {
-    return BigInt(Math.round(timestamp / 1000) * 10000);
-  }
-
   async prepareTransaction(transactionData) {
     try {
       liskCryptography.validateBase32Address(transactionData.recipientAddress);
@@ -38,7 +38,7 @@ class LiskChainCrypto {
       );
     }
 
-    let nonce = this._computeNonceFromTimestamp(transactionData.timestamp);
+    let nonce = this._generateNextNonce(transactionData);
 
     let txnData = {
       moduleID: 2,
@@ -48,7 +48,7 @@ class LiskChainCrypto {
         amount: BigInt(transactionData.amount),
         recipientAddress: liskCryptography.getAddressFromBase32Address(transactionData.recipientAddress),
         data: '',
-        nonce // TODO 222 HOW to handle nonce?
+        nonce
       },
       nonce
     };
@@ -62,17 +62,12 @@ class LiskChainCrypto {
     let { address: signerAddress, publicKey: signerPublicKey } = liskCryptography.getAddressAndPublicKeyFromPassphrase(this.passphrase);
 
     let preparedTxn = {
-      moduleID: signedTxn.moduleID,
-      assetID: signedTxn.assetID,
-      fee: signedTxn.fee.toString(),
-      asset: {
-        amount: signedTxn.asset.amount.toString(),
-        recipientAddress: signedTxn.asset.recipientAddress.toString('hex'),
-        data: signedTxn.data,
-        nonce: signedTxn.nonce.toString()
-      },
-      nonce: signedTxn.nonce.toString(),
-      senderPublicKey: signedTxn.senderPublicKey.toString('hex'),
+      id: signedTxn.id.toString('hex'),
+      message: signedTxn.asset.data,
+      amount: signedTxn.asset.amount.toString(),
+      timestamp: transactionData.timestamp,
+      senderAddress: sharedAddress,
+      recipientAddress: signedTxn.asset.recipientAddress.toString('hex'),
       signatures: [
         {
           signerAddress: sharedAddress,
@@ -80,7 +75,11 @@ class LiskChainCrypto {
           signature: signedTxn.signatures[0].toString('hex')
         }
       ],
-      id: signedTxn.id.toString('hex')
+      moduleID: signedTxn.moduleID,
+      assetID: signedTxn.assetID,
+      fee: signedTxn.fee.toString(),
+      nonce: signedTxn.asset.nonce.toString(),
+      senderPublicKey: signedTxn.senderPublicKey.toString('hex')
     };
 
     // The signature needs to be an object with a signerAddress property, the other
@@ -92,6 +91,26 @@ class LiskChainCrypto {
     };
 
     return {transaction: preparedTxn, signature: multisigTxnSignature};
+  }
+
+  _generateNextNonce(transactionData) {
+    // If the latestTimestamp changes, it means that a new block is being processed.
+    // In this case, reset the nonceIndex to 0.
+    if (this.latestTimestamp !== transactionData.timestamp) {
+      this.latestTimestamp = transactionData.timestamp;
+      this.nonceIndex = 0;
+      this.recentTransactionMessageSet.clear();
+    }
+    // If a transaction has already been encountered before, it means that the parent block is being
+    // re-processed (due to a past failure).
+    // In this case, reset the nonceIndex to 0.
+    if (this.recentTransactionMessageSet.has(transactionData.message)) {
+      this.nonceIndex = 0;
+      this.recentTransactionMessageSet.clear();
+    }
+    this.recentTransactionMessageSet.add(transactionData.message);
+
+    return BigInt(transactionData.timestamp + this.nonceIndex++);
   }
 }
 
