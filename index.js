@@ -90,8 +90,8 @@ class LiskChainCrypto {
     if (transactionData.message != null) {
       txnData.asset.data = transactionData.message;
     }
-    let txn = await client.transaction.create(txnData, this.sharedPassphrase);
-    let signedTxn = await client.transaction.sign(txn, [this.sharedPassphrase, this.passphrase]);
+    let txn = await this.apiClient.transaction.create(txnData, this.sharedPassphrase);
+    let signedTxn = await this.apiClient.transaction.sign(txn, [this.sharedPassphrase, this.passphrase]);
 
     let { address: sharedAddress, publicKey: sharedPublicKey } = liskCryptography.getAddressAndPublicKeyFromPassphrase(this.sharedPassphrase);
     let { address: signerAddress, publicKey: signerPublicKey } = liskCryptography.getAddressAndPublicKeyFromPassphrase(this.passphrase);
