@@ -1,7 +1,8 @@
 const {
-  apiClient: liskAPIClient,
   cryptography: liskCryptography
 } = require('@liskhq/lisk-client');
+
+const LiskWSClient = require('lisk-v3-ws-client-manager');
 
 // const TESTNET_NETWORK_ID = '15f0dacc1060e91818224a94286b13aa04279c640bd5d6f193182031d133df7c'; // Lisk testnet
 const MAINNET_NETWORK_ID = '4c09e6a781fc4c7bdb936ee815de8f94190f8a7519becd9de2081832be309a99'; // Lisk mainnet
@@ -18,14 +19,24 @@ class LiskChainCrypto {
     this.networkIdBytes = Buffer.from(chainOptions.networkId || DEFAULT_NETWORK_ID, 'hex');
     this.rpcURL = chainOptions.rpcURL;
     this.apiClient = null;
+    this.liskWsClient = new LiskWSClient({
+      {
+        liskWsHost: this.rpcURL
+      },
+      logger: {
+        info: () => {},
+        warn: () => {},
+        error: () => {}
+      }
+    });
   }
 
   async load() {
-    this.apiClient = await liskAPIClient.createWSClient(this.rpcURL);
+    this.apiClient = await this.liskWsClient.createWsClient(true);
   }
 
   async unload() {
-    await this.apiClient.close();
+    await this.liskWsClient.close();
   }
 
   // This method checks that:
