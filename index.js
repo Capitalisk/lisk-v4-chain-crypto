@@ -1,5 +1,11 @@
-const liskCryptography = require('@liskhq/lisk-cryptography');
-const liskTransactions = require('@liskhq/lisk-transactions');
+const {
+  apiClient: liskAPIClient,
+  cryptography: liskCryptography
+} = require('@liskhq/lisk-client');
+
+// const TESTNET_NETWORK_ID = '15f0dacc1060e91818224a94286b13aa04279c640bd5d6f193182031d133df7c'; // Lisk testnet
+const MAINNET_NETWORK_ID = '4c09e6a781fc4c7bdb936ee815de8f94190f8a7519becd9de2081832be309a99'; // Lisk mainnet
+const DEFAULT_NETWORK_ID = MAINNET_NETWORK_ID;
 
 class LiskChainCrypto {
   constructor({chainOptions}) {
@@ -9,24 +15,53 @@ class LiskChainCrypto {
     this.nonceIndex = 0;
     // Transaction messages can be used as unique identifiers when the ID is not known.
     this.recentTransactionMessageSet = new Set();
+    this.networkIdBytes = Buffer.from(chainOptions.networkId || DEFAULT_NETWORK_ID, 'hex');
+    this.rpcURL = chainOptions.rpcURL;
+    this.apiClient = null;
   }
 
-  async load() {}
+  async load() {
+    this.apiClient = await liskAPIClient.createWSClient(this.rpcURL);
+  }
 
-  async unload() {}
+  async unload() {
+    await this.apiClient.close();
+  }
 
   // This method checks that:
   // 1. The signerAddress corresponds to the publicKey.
   // 2. The publicKey corresponds to the signature.
   async verifyTransactionSignature(transaction, signaturePacket) {
     let { signature: signatureToVerify, publicKey, signerAddress } = signaturePacket;
-    let expectedAddress = liskCryptography.getAddressFromPublicKey(publicKey);
+    let expectedAddress = liskCryptography.getAddressFromPublicKey(publicKey).toString('hex');
     if (signerAddress !== expectedAddress) {
       return false;
     }
-    let { signature, signSignature, signatures, ...transactionToHash } = transaction;
-    let txnHash = liskCryptography.hash(liskTransactions.utils.getTransactionBytes(transactionToHash));
-    return liskCryptography.verifyData(txnHash, signatureToVerify, publicKey);
+
+    let liskTxn = {
+      moduleID: transaction.moduleID,
+      assetID: transaction.assetID,
+      fee: BigInt(transaction.fee),
+      asset: {
+        amount: BigInt(transaction.amount),
+        recipientAddress: Buffer.from(transaction.recipientAddress, 'hex'),
+        data: transaction.message,
+        nonce: BigInt(transaction.nonce)
+      },
+      nonce: BigInt(transaction.nonce),
+      senderPublicKey: Buffer.from(transaction.senderPublicKey, 'hex'),
+      signatures: [],
+      id: Buffer.from(transaction.id, 'hex')
+    };
+
+    let txnBuffer = this.apiClient.transaction.encode(liskTxn);
+    let transactionWithNetworkIdBuffer = Buffer.concat([this.networkIdBytes, txnBuffer]);
+
+    return liskCryptography.verifyData(
+      transactionWithNetworkIdBuffer,
+      Buffer.from(signatureToVerify, 'hex'),
+      Buffer.from(publicKey, 'hex')
+    );
   }
 
   async prepareTransaction(transactionData) {
