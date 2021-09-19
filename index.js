@@ -56,10 +56,9 @@ class LiskChainCrypto {
       asset: {
         amount: BigInt(transaction.amount),
         recipientAddress: Buffer.from(transaction.recipientAddress, 'hex'),
-        data: transaction.message,
-        nonce: BigInt(transaction.nonce)
+        data: transaction.message
       },
-      nonce: BigInt(transaction.accountNonce),
+      nonce: BigInt(transaction.nonce),
       senderPublicKey: Buffer.from(transaction.senderPublicKey, 'hex'),
       signatures: [],
       id: Buffer.from(transaction.id, 'hex')
@@ -93,10 +92,9 @@ class LiskChainCrypto {
       asset: {
         amount: BigInt(transactionData.amount),
         recipientAddress: liskCryptography.getAddressFromBase32Address(transactionData.recipientAddress),
-        data: '',
-        nonce
+        data: ''
       },
-      // nonce // TODO 222 Fix account nonce (See https://github.com/LiskHQ/lisk-desktop/issues/3801)
+      nonce
     };
     if (transactionData.message != null) {
       txnData.asset.data = transactionData.message;
@@ -124,8 +122,7 @@ class LiskChainCrypto {
       moduleID: signedTxn.moduleID,
       assetID: signedTxn.assetID,
       fee: signedTxn.fee.toString(),
-      nonce: signedTxn.asset.nonce.toString(),
-      accountNonce: signedTxn.nonce.toString(),
+      nonce: signedTxn.nonce.toString(),
       senderPublicKey: signedTxn.senderPublicKey.toString('hex')
     };
 
