@@ -33,6 +33,9 @@ class LiskChainCrypto {
 
   async load() {
     this.apiClient = await this.liskWsClient.createWsClient(true);
+    let { address: sharedAddress, publicKey: sharedPublicKey } = liskCryptography.getAddressAndPublicKeyFromPassphrase(this.sharedPassphrase);
+    this.multisigWalletAddress = sharedAddress;
+    this.multisigWalletPublicKey = sharedPublicKey;
   }
 
   async unload() {
@@ -83,7 +86,7 @@ class LiskChainCrypto {
       );
     }
 
-    let nonce = this._generateNextNonce(transactionData);
+    let nonce = await this._getNextNonce(transactionData);
 
     let txnData = {
       moduleID: 2,
@@ -102,7 +105,6 @@ class LiskChainCrypto {
     let txn = await this.apiClient.transaction.create(txnData, this.sharedPassphrase);
     let signedTxn = await this.apiClient.transaction.sign(txn, [this.sharedPassphrase, this.passphrase]);
 
-    let { address: sharedAddress, publicKey: sharedPublicKey } = liskCryptography.getAddressAndPublicKeyFromPassphrase(this.sharedPassphrase);
     let { address: signerAddress, publicKey: signerPublicKey } = liskCryptography.getAddressAndPublicKeyFromPassphrase(this.passphrase);
 
     let preparedTxn = {
@@ -110,12 +112,12 @@ class LiskChainCrypto {
       message: signedTxn.asset.data,
       amount: signedTxn.asset.amount.toString(),
       timestamp: transactionData.timestamp,
-      senderAddress: sharedAddress,
+      senderAddress: this.multisigWalletAddress,
       recipientAddress: signedTxn.asset.recipientAddress.toString('hex'),
       signatures: [
         {
-          signerAddress: sharedAddress,
-          publicKey: sharedPublicKey.toString('hex'),
+          signerAddress: this.multisigWalletAddress,
+          publicKey: this.multisigWalletPublicKey.toString('hex'),
           signature: signedTxn.signatures[0].toString('hex')
         }
       ],
@@ -137,24 +139,36 @@ class LiskChainCrypto {
     return {transaction: preparedTxn, signature: multisigTxnSignature};
   }
 
-  _generateNextNonce(transactionData) {
+  async _fetchMultisigAccountNonce() {
+    let hexAddress = liskCryptography.getAddressFromBase32Address(this.multisigWalletAddress, 'lsk');
+    let account = await this.apiClient.account.get(hexAddress);
+    return account.sequence.nonce;
+  }
+
+  async _getNextNonce(transactionData) {
     // If the latestTimestamp changes, it means that a new block is being processed.
     // In this case, reset the nonceIndex to 0.
     if (this.latestTimestamp !== transactionData.timestamp) {
+      let nonce = await this._fetchMultisigAccountNonce();
+
+      if (nonce > this.nonceIndex || transactionData.timestamp < this.latestTimestamp) {
+        this.nonceIndex = nonce;
+      }
+
       this.latestTimestamp = transactionData.timestamp;
-      this.nonceIndex = 0;
       this.recentTransactionMessageSet.clear();
     }
     // If a transaction has already been encountered before, it means that the parent block is being
-    // re-processed (due to a past failure).
-    // In this case, reset the nonceIndex to 0.
+    // re-processed (due to a recent failure).
+    // In this case, reset the nonceIndex to the one from the database.
     if (this.recentTransactionMessageSet.has(transactionData.message)) {
-      this.nonceIndex = 0;
+      let nonce = await this._fetchMultisigAccountNonce();
+      this.nonceIndex = nonce;
       this.recentTransactionMessageSet.clear();
     }
     this.recentTransactionMessageSet.add(transactionData.message);
 
-    return BigInt(transactionData.timestamp + this.nonceIndex++);
+    return BigInt(this.nonceIndex++);
   }
 }
 
