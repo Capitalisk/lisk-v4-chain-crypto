@@ -20,8 +20,8 @@ class LiskChainCrypto {
     this.rpcURL = chainOptions.rpcURL;
     this.apiClient = null;
     this.liskWsClient = new LiskWSClient({
-      {
-        liskWsHost: this.rpcURL
+      config: {
+        rpcURL: this.rpcURL
       },
       logger: {
         info: () => {},
