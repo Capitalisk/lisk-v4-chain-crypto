@@ -1,6 +1,6 @@
 {
   "name": "lisk-chain-crypto",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "LDEX ChainCrypto plugin for Lisk and Leasehold",
   "main": "index.js",
   "directories": {
