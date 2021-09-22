@@ -139,8 +139,7 @@ class LiskChainCrypto {
   }
 
   async _fetchMultisigAccountNonce() {
-    let hexAddress = liskCryptography.getAddressFromBase32Address(this.multisigWalletAddress, 'lsk');
-    let account = await this.apiClient.account.get(hexAddress);
+    let account = await this.apiClient.account.get(this.multisigWalletAddress);
     return account.sequence.nonce;
   }
 
