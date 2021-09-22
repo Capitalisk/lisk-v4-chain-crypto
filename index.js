@@ -4,9 +4,8 @@ const {
 
 const LiskWSClient = require('lisk-v3-ws-client-manager');
 
-// const TESTNET_NETWORK_ID = '15f0dacc1060e91818224a94286b13aa04279c640bd5d6f193182031d133df7c'; // Lisk testnet
-const MAINNET_NETWORK_ID = '4c09e6a781fc4c7bdb936ee815de8f94190f8a7519becd9de2081832be309a99'; // Lisk mainnet
-const DEFAULT_NETWORK_ID = MAINNET_NETWORK_ID;
+const toBuffer = (data) => Buffer.from(data, 'hex');
+const bufferToString = (hexBuffer) => hexBuffer.toString('hex');
 
 class LiskChainCrypto {
   constructor({chainOptions}) {
@@ -16,7 +15,6 @@ class LiskChainCrypto {
     this.nonceIndex = 0;
     // Transaction messages can be used as unique identifiers when the ID is not known.
     this.recentTransactionMessageSet = new Set();
-    this.networkIdBytes = Buffer.from(chainOptions.networkId || DEFAULT_NETWORK_ID, 'hex');
     this.rpcURL = chainOptions.rpcURL;
     this.apiClient = null;
     this.liskWsClient = new LiskWSClient({
@@ -33,6 +31,7 @@ class LiskChainCrypto {
 
   async load() {
     this.apiClient = await this.liskWsClient.createWsClient(true);
+    this.networkIdBytes = toBuffer(this.apiClient._nodeInfo.networkIdentifier);
     let { address: sharedAddress, publicKey: sharedPublicKey } = liskCryptography.getAddressAndPublicKeyFromPassphrase(this.sharedPassphrase);
     this.multisigWalletAddress = sharedAddress;
     this.multisigWalletPublicKey = sharedPublicKey;
@@ -47,7 +46,7 @@ class LiskChainCrypto {
   // 2. The publicKey corresponds to the signature.
   async verifyTransactionSignature(transaction, signaturePacket) {
     let { signature: signatureToVerify, publicKey, signerAddress } = signaturePacket;
-    let expectedAddress = liskCryptography.getAddressFromPublicKey(publicKey).toString('hex');
+    let expectedAddress = bufferToString(liskCryptography.getAddressFromPublicKey(publicKey));
     if (signerAddress !== expectedAddress) {
       return false;
     }
@@ -58,13 +57,13 @@ class LiskChainCrypto {
       fee: BigInt(transaction.fee),
       asset: {
         amount: BigInt(transaction.amount),
-        recipientAddress: Buffer.from(transaction.recipientAddress, 'hex'),
+        recipientAddress: toBuffer(transaction.recipientAddress),
         data: transaction.message
       },
       nonce: BigInt(transaction.nonce),
-      senderPublicKey: Buffer.from(transaction.senderPublicKey, 'hex'),
+      senderPublicKey: toBuffer(transaction.senderPublicKey),
       signatures: [],
-      id: Buffer.from(transaction.id, 'hex')
+      id: toBuffer(transaction.id)
     };
 
     let txnBuffer = this.apiClient.transaction.encode(liskTxn);
@@ -72,8 +71,8 @@ class LiskChainCrypto {
 
     return liskCryptography.verifyData(
       transactionWithNetworkIdBuffer,
-      Buffer.from(signatureToVerify, 'hex'),
-      Buffer.from(publicKey, 'hex')
+      toBuffer(signatureToVerify),
+      toBuffer(publicKey)
     );
   }
 
@@ -108,32 +107,32 @@ class LiskChainCrypto {
     let { address: signerAddress, publicKey: signerPublicKey } = liskCryptography.getAddressAndPublicKeyFromPassphrase(this.passphrase);
 
     let preparedTxn = {
-      id: signedTxn.id.toString('hex'),
+      id: bufferToString(signedTxn.id),
       message: signedTxn.asset.data,
       amount: signedTxn.asset.amount.toString(),
       timestamp: transactionData.timestamp,
       senderAddress: this.multisigWalletAddress,
-      recipientAddress: signedTxn.asset.recipientAddress.toString('hex'),
+      recipientAddress: bufferToString(signedTxn.asset.recipientAddress),
       signatures: [
         {
           signerAddress: this.multisigWalletAddress,
-          publicKey: this.multisigWalletPublicKey.toString('hex'),
-          signature: signedTxn.signatures[0].toString('hex')
+          publicKey: bufferToString(this.multisigWalletPublicKey),
+          signature: bufferToString(signedTxn.signatures[0])
         }
       ],
       moduleID: signedTxn.moduleID,
       assetID: signedTxn.assetID,
       fee: signedTxn.fee.toString(),
       nonce: signedTxn.nonce.toString(),
-      senderPublicKey: signedTxn.senderPublicKey.toString('hex')
+      senderPublicKey: bufferToString(signedTxn.senderPublicKey)
     };
 
     // The signature needs to be an object with a signerAddress property, the other
     // properties are flexible and depend on the requirements of the underlying blockchain.
     let multisigTxnSignature = {
       signerAddress,
-      publicKey: signerPublicKey.toString('hex'),
-      signature: signedTxn.signatures[1].toString('hex')
+      publicKey: bufferToString(signerPublicKey),
+      signature: bufferToString(signedTxn.signatures[1])
     };
 
     return {transaction: preparedTxn, signature: multisigTxnSignature};
