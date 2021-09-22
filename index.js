@@ -46,7 +46,10 @@ class LiskChainCrypto {
   // 2. The publicKey corresponds to the signature.
   async verifyTransactionSignature(transaction, signaturePacket) {
     let { signature: signatureToVerify, publicKey, signerAddress } = signaturePacket;
-    let expectedAddress = bufferToString(liskCryptography.getAddressFromPublicKey(publicKey));
+    let publicKeyBuffer = toBuffer(publicKey);
+    let expectedAddress = liskCryptography.getBase32AddressFromAddress(
+      liskCryptography.getAddressFromPublicKey(publicKeyBuffer)
+    );
     if (signerAddress !== expectedAddress) {
       return false;
     }
@@ -57,7 +60,7 @@ class LiskChainCrypto {
       fee: BigInt(transaction.fee),
       asset: {
         amount: BigInt(transaction.amount),
-        recipientAddress: toBuffer(transaction.recipientAddress),
+        recipientAddress: liskCryptography.getAddressFromBase32Address(transaction.recipientAddress),
         data: transaction.message
       },
       nonce: BigInt(transaction.nonce),
@@ -72,7 +75,7 @@ class LiskChainCrypto {
     return liskCryptography.verifyData(
       transactionWithNetworkIdBuffer,
       toBuffer(signatureToVerify),
-      toBuffer(publicKey)
+      publicKeyBuffer
     );
   }
 
@@ -111,11 +114,11 @@ class LiskChainCrypto {
       message: signedTxn.asset.data,
       amount: signedTxn.asset.amount.toString(),
       timestamp: transactionData.timestamp,
-      senderAddress: bufferToString(this.multisigWalletAddress),
-      recipientAddress: bufferToString(signedTxn.asset.recipientAddress),
+      senderAddress: liskCryptography.getBase32AddressFromAddress(this.multisigWalletAddress),
+      recipientAddress: liskCryptography.getBase32AddressFromAddress(signedTxn.asset.recipientAddress),
       signatures: [
         {
-          signerAddress: bufferToString(this.multisigWalletAddress),
+          signerAddress: liskCryptography.getBase32AddressFromAddress(this.multisigWalletAddress),
           publicKey: bufferToString(this.multisigWalletPublicKey),
           signature: bufferToString(signedTxn.signatures[0])
         }
@@ -130,7 +133,7 @@ class LiskChainCrypto {
     // The signature needs to be an object with a signerAddress property, the other
     // properties are flexible and depend on the requirements of the underlying blockchain.
     let multisigTxnSignature = {
-      signerAddress: bufferToString(signerAddress),
+      signerAddress: liskCryptography.getBase32AddressFromAddress(signerAddress),
       publicKey: bufferToString(signerPublicKey),
       signature: bufferToString(signedTxn.signatures[1])
     };
