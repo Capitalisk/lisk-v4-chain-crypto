@@ -111,11 +111,11 @@ class LiskChainCrypto {
       message: signedTxn.asset.data,
       amount: signedTxn.asset.amount.toString(),
       timestamp: transactionData.timestamp,
-      senderAddress: this.multisigWalletAddress,
+      senderAddress: bufferToString(this.multisigWalletAddress),
       recipientAddress: bufferToString(signedTxn.asset.recipientAddress),
       signatures: [
         {
-          signerAddress: this.multisigWalletAddress,
+          signerAddress: bufferToString(this.multisigWalletAddress),
           publicKey: bufferToString(this.multisigWalletPublicKey),
           signature: bufferToString(signedTxn.signatures[0])
         }
@@ -130,7 +130,7 @@ class LiskChainCrypto {
     // The signature needs to be an object with a signerAddress property, the other
     // properties are flexible and depend on the requirements of the underlying blockchain.
     let multisigTxnSignature = {
-      signerAddress,
+      signerAddress: bufferToString(signerAddress),
       publicKey: bufferToString(signerPublicKey),
       signature: bufferToString(signedTxn.signatures[1])
     };
