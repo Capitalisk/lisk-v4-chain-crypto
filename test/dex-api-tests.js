@@ -15,7 +15,8 @@ describe('DEX (ChainCrypto) API tests', async () => {
       chainOptions: {
         sharedPassphrase: 'original wolf grass seed excite current write castle lab brain hawk bless',
         passphrase: 'tell sun crazy time creek carbon cloud various turtle leisure cactus melody',
-        keyIndexDirPath: './test/data/'
+        keyIndexDirPath: './test/data/',
+        rpcURL: 'ws://216.128.135.183:8080/ws'
       },
       store: {
         saveItem: async (key, value) => {
