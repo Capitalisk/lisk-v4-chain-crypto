@@ -2,19 +2,28 @@ const {
   cryptography: liskCryptography
 } = require('@liskhq/lisk-client');
 
+const fs = require('fs');
+const util = require('util');
+
+const readFile = util.promisify(fs.readFile);
+const writeFile = util.promisify(fs.writeFile);
+
 const LiskWSClient = require('lisk-v3-ws-client-manager');
 
 const toBuffer = (data) => Buffer.from(data, 'hex');
 const bufferToString = (hexBuffer) => hexBuffer.toString('hex');
 
+const DEFAULT_RECENT_NONCES_MAX_COUNT = 300;
+const DEFAULT_TRANSACTION_STATE_FILE_PATH = './lisk-transaction-state.json';
+
 class LiskChainCrypto {
   constructor({chainOptions}) {
     this.passphrase = chainOptions.passphrase;
     this.sharedPassphrase = chainOptions.sharedPassphrase;
-    this.latestTimestamp = null;
-    this.nonceIndex = 0;
-    // Transaction messages can be used as unique identifiers when the ID is not known.
-    this.recentTransactionMessageSet = new Set();
+    this.transactionStateFilePath = chainOptions.transactionStateFilePath || DEFAULT_TRANSACTION_STATE_FILE_PATH;
+    this.recentNoncesMaxCount = chainOptions.recentNoncesMaxCount || DEFAULT_RECENT_NONCES_MAX_COUNT;
+    this.lastTimestamp = 0;
+    this.nonceIndex = 0n;
     this.rpcURL = chainOptions.rpcURL;
     this.apiClient = null;
     this.liskWsClient = new LiskWSClient({
@@ -35,6 +44,16 @@ class LiskChainCrypto {
     let { address: sharedAddress, publicKey: sharedPublicKey } = liskCryptography.getAddressAndPublicKeyFromPassphrase(this.sharedPassphrase);
     this.multisigWalletAddress = sharedAddress;
     this.multisigWalletPublicKey = sharedPublicKey;
+
+    try {
+      let transactionState = await readJSONFile(this.transactionStateFilePath);
+      this.recentNoncesMap = new Map(
+        Object.entries(transactionState.recentNonces).map(entry => [entry[0], BigInt(entry[1])])
+      );
+    } catch (error) {
+      this.nonceIndex = await this._fetchMultisigAccountNonce();
+      this.recentNoncesMap = new Map();
+    }
   }
 
   async unload() {
@@ -88,7 +107,7 @@ class LiskChainCrypto {
       );
     }
 
-    let nonce = await this._getNextNonce(transactionData);
+    let nonce = this._getNextNonce(transactionData);
 
     let txnData = {
       moduleID: 2,
@@ -116,13 +135,7 @@ class LiskChainCrypto {
       timestamp: transactionData.timestamp,
       senderAddress: liskCryptography.getBase32AddressFromAddress(this.multisigWalletAddress),
       recipientAddress: liskCryptography.getBase32AddressFromAddress(signedTxn.asset.recipientAddress),
-      signatures: [
-        {
-          signerAddress: liskCryptography.getBase32AddressFromAddress(this.multisigWalletAddress),
-          publicKey: bufferToString(this.multisigWalletPublicKey),
-          signature: bufferToString(signedTxn.signatures[0])
-        }
-      ],
+      signatures: [],
       moduleID: signedTxn.moduleID,
       assetID: signedTxn.assetID,
       fee: signedTxn.fee.toString(),
@@ -135,8 +148,16 @@ class LiskChainCrypto {
     let multisigTxnSignature = {
       signerAddress: liskCryptography.getBase32AddressFromAddress(signerAddress),
       publicKey: bufferToString(signerPublicKey),
-      signature: bufferToString(signedTxn.signatures[1])
+      signature: bufferToString(signedTxn.signatures.find(sigBuffer => sigBuffer.byteLength))
     };
+
+    if (this.lastTimestamp !== transactionData.timestamp) {
+      this.lastTimestamp = transactionData.timestamp;
+      let transactionState = {
+        recentNonces: Object.fromEntries([...this.recentNoncesMap.entries()].map(entry => [entry[0], entry[1].toString()]))
+      };
+      await writeJSONFile(this.transactionStateFilePath, transactionState);
+    }
 
     return {transaction: preparedTxn, signature: multisigTxnSignature};
   }
@@ -146,31 +167,40 @@ class LiskChainCrypto {
     return account.sequence.nonce;
   }
 
-  async _getNextNonce(transactionData) {
-    // If the latestTimestamp changes, it means that a new block is being processed.
-    // In this case, reset the nonceIndex to 0.
-    if (this.latestTimestamp !== transactionData.timestamp) {
-      let nonce = await this._fetchMultisigAccountNonce();
-
-      if (nonce > this.nonceIndex || transactionData.timestamp < this.latestTimestamp) {
-        this.nonceIndex = nonce;
-      }
-
-      this.latestTimestamp = transactionData.timestamp;
-      this.recentTransactionMessageSet.clear();
-    }
-    // If a transaction has already been encountered before, it means that the parent block is being
-    // re-processed (due to a recent failure).
-    // In this case, reset the nonceIndex to the one from the database.
-    if (this.recentTransactionMessageSet.has(transactionData.message)) {
-      let nonce = await this._fetchMultisigAccountNonce();
-      this.nonceIndex = nonce;
-      this.recentTransactionMessageSet.clear();
-    }
-    this.recentTransactionMessageSet.add(transactionData.message);
-
-    return BigInt(this.nonceIndex++);
+  _computeTradeId(transactionData) {
+    return `${transactionData.recipientAddress},${transactionData.message}`;
   }
+
+  _getNextNonce(transactionData) {
+    let tradeId = this._computeTradeId(transactionData);
+    let existingNonce = this.recentNoncesMap.get(tradeId);
+
+    if (existingNonce == null) {
+      this.recentNoncesMap.set(tradeId, this.nonceIndex);
+      while (this.recentNoncesMap.size > this.recentNoncesMaxCount) {
+        let nextKey = this.recentNoncesMap.keys().next().value;
+        this.recentNoncesMap.delete(nextKey);
+      }
+    } else {
+      this.nonceIndex = existingNonce;
+    }
+
+    return this.nonceIndex++;
+  }
+}
+
+async function readJSONFile(filePath) {
+  return JSON.parse(await readFile(filePath));
+}
+
+async function writeJSONFile(filePath, object) {
+  return writeFile(filePath, JSON.stringify(object, ' ', 2), {encoding: 'utf8'});
+}
+
+async function wait(duration) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, duration);
+  });
 }
 
 module.exports = LiskChainCrypto;
