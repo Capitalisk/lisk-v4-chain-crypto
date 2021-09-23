@@ -85,7 +85,7 @@ class LiskChainCrypto {
       nonce: BigInt(transaction.nonce),
       senderPublicKey: toBuffer(transaction.senderPublicKey),
       signatures: [],
-      id: toBuffer(transaction.id)
+      id: transaction.id
     };
 
     let txnBuffer = this.apiClient.transaction.encode(liskTxn);
@@ -128,8 +128,10 @@ class LiskChainCrypto {
 
     let { address: signerAddress, publicKey: signerPublicKey } = liskCryptography.getAddressAndPublicKeyFromPassphrase(this.passphrase);
 
+    let nonceString = signedTxn.nonce.toString();
+
     let preparedTxn = {
-      id: bufferToString(signedTxn.id),
+      id: nonceString, // Use the nonce as the id because it is consistent throughout the entire lifecycle of the transaction.
       message: signedTxn.asset.data,
       amount: signedTxn.asset.amount.toString(),
       timestamp: transactionData.timestamp,
@@ -139,7 +141,7 @@ class LiskChainCrypto {
       moduleID: signedTxn.moduleID,
       assetID: signedTxn.assetID,
       fee: signedTxn.fee.toString(),
-      nonce: signedTxn.nonce.toString(),
+      nonce: nonceString,
       senderPublicKey: bufferToString(signedTxn.senderPublicKey)
     };
 
