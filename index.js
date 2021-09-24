@@ -13,7 +13,7 @@ const LiskWSClient = require('lisk-v3-ws-client-manager');
 const toBuffer = (data) => Buffer.from(data, 'hex');
 const bufferToString = (hexBuffer) => hexBuffer.toString('hex');
 
-const DEFAULT_RECENT_NONCES_MAX_COUNT = 300;
+const DEFAULT_RECENT_NONCES_MAX_COUNT = 10000;
 const DEFAULT_TRANSACTION_STATE_FILE_PATH = './lisk-transaction-state.json';
 
 class LiskChainCrypto {
