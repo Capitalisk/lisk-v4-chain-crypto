@@ -129,13 +129,14 @@ class LiskChainCrypto {
     let { address: signerAddress, publicKey: signerPublicKey } = liskCryptography.getAddressAndPublicKeyFromPassphrase(this.passphrase);
 
     let nonceString = signedTxn.nonce.toString();
+    let multisigWalletAddressBase32 = liskCryptography.getBase32AddressFromAddress(this.multisigWalletAddress);
 
     let preparedTxn = {
-      id: nonceString, // Use the nonce as the id because it is consistent throughout the entire lifecycle of the transaction.
+      id: `${multisigWalletAddressBase32}-${nonceString}`, // Use the nonce as the id because it is consistent throughout the entire lifecycle of the transaction.
       message: signedTxn.asset.data,
       amount: signedTxn.asset.amount.toString(),
       timestamp: transactionData.timestamp,
-      senderAddress: liskCryptography.getBase32AddressFromAddress(this.multisigWalletAddress),
+      senderAddress: multisigWalletAddressBase32,
       recipientAddress: liskCryptography.getBase32AddressFromAddress(signedTxn.asset.recipientAddress),
       signatures: [],
       moduleID: signedTxn.moduleID,
