@@ -47,6 +47,7 @@ class LiskChainCrypto {
 
     try {
       let transactionState = await readJSONFile(this.transactionStateFilePath);
+      this.nonceIndex = BigInt(transactionState.lastNonce) + 1n;
       this.recentNoncesMap = new Map(
         Object.entries(transactionState.recentNonces).map(entry => [entry[0], BigInt(entry[1])])
       );
@@ -157,6 +158,7 @@ class LiskChainCrypto {
     if (this.lastTimestamp !== transactionData.timestamp) {
       this.lastTimestamp = transactionData.timestamp;
       let transactionState = {
+        lastNonce: nonceString,
         recentNonces: Object.fromEntries([...this.recentNoncesMap.entries()].map(entry => [entry[0], entry[1].toString()]))
       };
       await writeJSONFile(this.transactionStateFilePath, transactionState);
