@@ -4,17 +4,22 @@ const {
 
 const fs = require('fs');
 const util = require('util');
+const crypto = require('crypto');
 
 const readFile = util.promisify(fs.readFile);
 const writeFile = util.promisify(fs.writeFile);
 
 const LiskWSClient = require('lisk-v3-ws-client-manager');
 
-const toBuffer = (data) => Buffer.from(data, 'hex');
-const bufferToString = (hexBuffer) => hexBuffer.toString('hex');
-
+const DEX_TRANSACTION_ID_LENGTH = 44;
 const DEFAULT_RECENT_NONCES_MAX_COUNT = 10000;
 const DEFAULT_TRANSACTION_STATE_FILE_PATH = './lisk-transaction-state.json';
+
+const toBuffer = (data) => Buffer.from(data, 'hex');
+const bufferToString = (hexBuffer) => hexBuffer.toString('hex');
+const computeDEXTransactionId = (senderAddress, nonce) => {
+  return crypto.createHash('sha256').update(`${senderAddress}-${nonce}`).digest('hex').slice(0, DEX_TRANSACTION_ID_LENGTH);
+};
 
 class LiskChainCrypto {
   constructor({chainOptions}) {
@@ -133,7 +138,7 @@ class LiskChainCrypto {
     let multisigWalletAddressBase32 = liskCryptography.getBase32AddressFromAddress(this.multisigWalletAddress);
 
     let preparedTxn = {
-      id: `${multisigWalletAddressBase32}-${nonceString}`, // Use the nonce as the id because it is consistent throughout the entire lifecycle of the transaction.
+      id: computeDEXTransactionId(multisigWalletAddressBase32, nonceString), // Use the nonce as the id because it is consistent throughout the entire lifecycle of the transaction.
       message: signedTxn.asset.data,
       amount: signedTxn.asset.amount.toString(),
       timestamp: transactionData.timestamp,
