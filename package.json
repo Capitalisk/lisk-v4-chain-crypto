@@ -27,7 +27,7 @@
   "homepage": "https://github.com/Leasehold/lisk-chain-crypto#readme",
   "dependencies": {
     "@liskhq/lisk-client": "^5.1.3",
-    "lisk-v3-ws-client-manager": "^1.0.2"
+    "lisk-v3-ws-client-manager": "^1.0.3"
   },
   "devDependencies": {
     "mocha": "^8.2.1"
