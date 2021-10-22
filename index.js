@@ -1,5 +1,6 @@
 const {
-  cryptography: liskCryptography
+  cryptography: liskCryptography,
+  transactions: liskTransactions
 } = require('@liskhq/lisk-client');
 
 const fs = require('fs');
@@ -22,7 +23,7 @@ const computeDEXTransactionId = (senderAddress, nonce) => {
 };
 
 class LiskChainCrypto {
-  constructor({chainOptions}) {
+  constructor({chainOptions, logger}) {
     this.passphrase = chainOptions.passphrase;
     this.sharedPassphrase = chainOptions.sharedPassphrase;
     this.transactionStateFilePath = chainOptions.transactionStateFilePath || DEFAULT_TRANSACTION_STATE_FILE_PATH;
@@ -31,6 +32,20 @@ class LiskChainCrypto {
     this.nonceIndex = 0n;
     this.rpcURL = chainOptions.rpcURL;
     this.apiClient = null;
+    this.logger = logger;
+
+    this.transferAssetSchema = {
+      '$id': 'lisk/transfer-asset',
+      title: 'Transfer transaction asset',
+      type: 'object',
+      required: ['amount', 'recipientAddress', 'data'],
+      properties: {
+        amount: {dataType: 'uint64', fieldNumber: 1},
+        recipientAddress: {dataType: 'bytes', fieldNumber: 2, minLength: 20, maxLength: 20},
+        data: {dataType: 'string', fieldNumber: 3, minLength: 0, maxLength: 64}
+      }
+    };
+
     this.liskWsClient = new LiskWSClient({
       config: {
         rpcURL: this.rpcURL
@@ -50,6 +65,9 @@ class LiskChainCrypto {
     this.multisigWalletAddress = sharedAddress;
     this.multisigWalletPublicKey = sharedPublicKey;
 
+    let account = await this.apiClient.account.get(this.multisigWalletAddress);
+    this.multisigWalletKeys = account.keys;
+
     try {
       let transactionState = await readJSONFile(this.transactionStateFilePath);
       this.nonceIndex = BigInt(transactionState.lastNonce) + 1n;
@@ -57,7 +75,7 @@ class LiskChainCrypto {
         Object.entries(transactionState.recentNonces).map(entry => [entry[0], BigInt(entry[1])])
       );
     } catch (error) {
-      this.nonceIndex = await this._fetchMultisigAccountNonce();
+      this.nonceIndex = account.sequence.nonce;
       this.recentNoncesMap = new Map();
     }
   }
@@ -124,13 +142,24 @@ class LiskChainCrypto {
         recipientAddress: liskCryptography.getAddressFromBase32Address(transactionData.recipientAddress),
         data: ''
       },
-      nonce
+      nonce,
+      senderPublicKey: this.multisigWalletPublicKey,
+      signatures: []
     };
     if (transactionData.message != null) {
       txnData.asset.data = transactionData.message;
     }
-    let txn = await this.apiClient.transaction.create(txnData, this.sharedPassphrase);
-    let signedTxn = await this.apiClient.transaction.sign(txn, [this.sharedPassphrase, this.passphrase]);
+
+    let signedTxn = liskTransactions.signMultiSignatureTransaction(
+      this.transferAssetSchema,
+      txnData,
+      this.networkIdBytes,
+      this.passphrase,
+      this.multisigWalletKeys
+    );
+
+    liskTransactions.signMultiSignatureTransaction(this.transferAssetSchema, signedTxn, this.networkIdBytes, this.sharedPassphrase, this.multisigWalletKeys);
+    liskTransactions.signMultiSignatureTransaction(this.transferAssetSchema, signedTxn, this.networkIdBytes, this.passphrase, this.multisigWalletKeys);
 
     let { address: signerAddress, publicKey: signerPublicKey } = liskCryptography.getAddressAndPublicKeyFromPassphrase(this.passphrase);
 
@@ -138,7 +167,7 @@ class LiskChainCrypto {
     let multisigWalletAddressBase32 = liskCryptography.getBase32AddressFromAddress(this.multisigWalletAddress);
 
     let preparedTxn = {
-      id: computeDEXTransactionId(multisigWalletAddressBase32, nonceString), // Use the nonce as the id because it is consistent throughout the entire lifecycle of the transaction.
+      id: computeDEXTransactionId(multisigWalletAddressBase32, nonceString),
       message: signedTxn.asset.data,
       amount: signedTxn.asset.amount.toString(),
       timestamp: transactionData.timestamp,
@@ -170,15 +199,20 @@ class LiskChainCrypto {
         lastNonce: nonceString,
         recentNonces
       };
-      await writeJSONFile(this.transactionStateFilePath, transactionState);
+      try {
+        await writeJSONFile(this.transactionStateFilePath, transactionState);
+      } catch (error) {
+        this.logger.debug(
+          `Failed to write transaction state to file ${
+            this.transactionStateFilePath
+          } because of error - ${
+            error.message
+          }`
+        );
+      }
     }
 
     return {transaction: preparedTxn, signature: multisigTxnSignature};
-  }
-
-  async _fetchMultisigAccountNonce() {
-    let account = await this.apiClient.account.get(this.multisigWalletAddress);
-    return account.sequence.nonce;
   }
 
   _computeTradeId(transactionData) {
