@@ -3,18 +3,13 @@ const {
   transactions: liskTransactions
 } = require('@liskhq/lisk-client');
 
-const fs = require('fs');
-const util = require('util');
 const crypto = require('crypto');
-
-const readFile = util.promisify(fs.readFile);
-const writeFile = util.promisify(fs.writeFile);
 
 const LiskWSClient = require('lisk-v3-ws-client-manager');
 
 const DEX_TRANSACTION_ID_LENGTH = 44;
-const DEFAULT_RECENT_NONCES_MAX_COUNT = 10000;
-const DEFAULT_TRANSACTION_STATE_FILE_PATH = './lisk-transaction-state.json';
+const TIMESTAMP_NORMALIZATION_FACTOR = 1000;
+const MAX_TRANSACTIONS_PER_TIMESTAMP = 100;
 
 const toBuffer = (data) => Buffer.from(data, 'hex');
 const bufferToString = (hexBuffer) => hexBuffer.toString('hex');
@@ -24,11 +19,9 @@ const computeDEXTransactionId = (senderAddress, nonce) => {
 
 class LiskChainCrypto {
   constructor({chainOptions, logger}) {
+    this.moduleAlias = chainOptions.moduleAlias;
     this.passphrase = chainOptions.passphrase;
     this.sharedPassphrase = chainOptions.sharedPassphrase;
-    this.transactionStateFilePath = chainOptions.transactionStateFilePath || DEFAULT_TRANSACTION_STATE_FILE_PATH;
-    this.recentNoncesMaxCount = chainOptions.recentNoncesMaxCount || DEFAULT_RECENT_NONCES_MAX_COUNT;
-    this.lastTimestamp = 0;
     this.nonceIndex = 0n;
     this.rpcURL = chainOptions.rpcURL;
     this.apiClient = null;
@@ -58,30 +51,45 @@ class LiskChainCrypto {
     });
   }
 
-  async load() {
+  async load(channel, lastProcessedTimestamp) {
+    this.channel = channel;
     this.apiClient = await this.liskWsClient.createWsClient(true);
     this.networkIdBytes = toBuffer(this.apiClient._nodeInfo.networkIdentifier);
     let { address: sharedAddress, publicKey: sharedPublicKey } = liskCryptography.getAddressAndPublicKeyFromPassphrase(this.sharedPassphrase);
     this.multisigWalletAddress = sharedAddress;
+    this.multisigWalletAddressBase32 = liskCryptography.getBase32AddressFromAddress(this.multisigWalletAddress);
     this.multisigWalletPublicKey = sharedPublicKey;
 
     let account = await this.apiClient.account.get(this.multisigWalletAddress);
     this.multisigWalletKeys = account.keys;
+    this.initialAccountNonce = account.sequence.nonce;
 
-    try {
-      let transactionState = await readJSONFile(this.transactionStateFilePath);
-      this.nonceIndex = BigInt(transactionState.lastNonce) + 1n;
-      this.recentNoncesMap = new Map(
-        Object.entries(transactionState.recentNonces).map(entry => [entry[0], BigInt(entry[1])])
-      );
-    } catch (error) {
-      this.nonceIndex = account.sequence.nonce;
-      this.recentNoncesMap = new Map();
-    }
+    await this.reset(lastProcessedTimestamp);
   }
 
   async unload() {
     await this.liskWsClient.close();
+  }
+
+  async reset(lastProcessedTimestamp) {
+    let outboundTxns = await this.channel.invoke(`${this.moduleAlias}:getOutboundTransactions`, {
+      walletAddress: this.multisigWalletAddressBase32,
+      fromTimestamp: Math.floor(lastProcessedTimestamp / TIMESTAMP_NORMALIZATION_FACTOR),
+      limit: MAX_TRANSACTIONS_PER_TIMESTAMP,
+      order: 'desc'
+    });
+    if (outboundTxns.length) {
+      let highestNonce = outboundTxns.reduce((accumulator, txn) => {
+        let txnNonce = BigInt(txn.nonce);
+        if (txnNonce > accumulator) {
+          return txnNonce;
+        }
+        return accumulator;
+      }, 0n);
+      this.nonceIndex = highestNonce + 1n;
+    } else {
+      this.nonceIndex = this.initialAccountNonce;
+    }
   }
 
   // This method checks that:
@@ -131,7 +139,7 @@ class LiskChainCrypto {
       );
     }
 
-    let nonce = this._getNextNonce(transactionData);
+    let nonce = this.nonceIndex++;
 
     let txnData = {
       moduleID: 2,
@@ -164,14 +172,13 @@ class LiskChainCrypto {
     let { address: signerAddress, publicKey: signerPublicKey } = liskCryptography.getAddressAndPublicKeyFromPassphrase(this.passphrase);
 
     let nonceString = signedTxn.nonce.toString();
-    let multisigWalletAddressBase32 = liskCryptography.getBase32AddressFromAddress(this.multisigWalletAddress);
 
     let preparedTxn = {
-      id: computeDEXTransactionId(multisigWalletAddressBase32, nonceString),
+      id: computeDEXTransactionId(this.multisigWalletAddressBase32, nonceString),
       message: signedTxn.asset.data,
       amount: signedTxn.asset.amount.toString(),
       timestamp: transactionData.timestamp,
-      senderAddress: multisigWalletAddressBase32,
+      senderAddress: this.multisigWalletAddressBase32,
       recipientAddress: liskCryptography.getBase32AddressFromAddress(signedTxn.asset.recipientAddress),
       signatures: [],
       moduleID: signedTxn.moduleID,
@@ -189,60 +196,8 @@ class LiskChainCrypto {
       signature: bufferToString(signedTxn.signatures.find(sigBuffer => sigBuffer.byteLength))
     };
 
-    if (this.lastTimestamp !== transactionData.timestamp) {
-      this.lastTimestamp = transactionData.timestamp;
-      let recentNonces = {};
-      for (let [key, value] of this.recentNoncesMap.entries()) {
-        recentNonces[key] = value.toString();
-      }
-      let transactionState = {
-        lastNonce: nonceString,
-        recentNonces
-      };
-      try {
-        await writeJSONFile(this.transactionStateFilePath, transactionState);
-      } catch (error) {
-        this.logger.debug(
-          `Failed to write transaction state to file ${
-            this.transactionStateFilePath
-          } because of error - ${
-            error.message
-          }`
-        );
-      }
-    }
-
     return {transaction: preparedTxn, signature: multisigTxnSignature};
   }
-
-  _computeTradeId(transactionData) {
-    return `${transactionData.recipientAddress},${transactionData.message}`;
-  }
-
-  _getNextNonce(transactionData) {
-    let tradeId = this._computeTradeId(transactionData);
-    let existingNonce = this.recentNoncesMap.get(tradeId);
-
-    if (existingNonce == null) {
-      this.recentNoncesMap.set(tradeId, this.nonceIndex);
-      while (this.recentNoncesMap.size > this.recentNoncesMaxCount) {
-        let nextKey = this.recentNoncesMap.keys().next().value;
-        this.recentNoncesMap.delete(nextKey);
-      }
-    } else {
-      this.nonceIndex = existingNonce;
-    }
-
-    return this.nonceIndex++;
-  }
-}
-
-async function readJSONFile(filePath) {
-  return JSON.parse(await readFile(filePath));
-}
-
-async function writeJSONFile(filePath, object) {
-  return writeFile(filePath, JSON.stringify(object, ' ', 2), {encoding: 'utf8'});
 }
 
 async function wait(duration) {
