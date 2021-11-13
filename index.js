@@ -9,7 +9,10 @@ const LiskWSClient = require('lisk-v3-ws-client-manager');
 
 const DEX_TRANSACTION_ID_LENGTH = 44;
 const TIMESTAMP_NORMALIZATION_FACTOR = 1000;
+const DEFAULT_RECENT_NONCES_MAX_COUNT = 10000;
 const MAX_TRANSACTIONS_PER_TIMESTAMP = 100;
+const API_BLOCK_FETCH_LIMIT = 50;
+const DEFAULT_BLOCKS_LOOK_AHEAD_MAX_COUNT = 300;
 
 const toBuffer = (data) => Buffer.from(data, 'hex');
 const bufferToString = (hexBuffer) => hexBuffer.toString('hex');
@@ -22,6 +25,8 @@ class LiskChainCrypto {
     this.moduleAlias = chainOptions.moduleAlias;
     this.passphrase = chainOptions.passphrase;
     this.sharedPassphrase = chainOptions.sharedPassphrase;
+    this.recentNoncesMaxCount = chainOptions.recentNoncesMaxCount || DEFAULT_RECENT_NONCES_MAX_COUNT;
+    this.blocksLookAheadMaxCount = chainOptions.blocksLookAheadMaxCount || DEFAULT_BLOCKS_LOOK_AHEAD_MAX_COUNT;
     this.nonceIndex = 0n;
     this.rpcURL = chainOptions.rpcURL;
     this.apiClient = null;
@@ -72,14 +77,22 @@ class LiskChainCrypto {
   }
 
   async reset(lastProcessedTimestamp) {
-    let outboundTxns = await this.channel.invoke(`${this.moduleAlias}:getOutboundTransactions`, {
-      walletAddress: this.multisigWalletAddressBase32,
-      fromTimestamp: Math.floor(lastProcessedTimestamp / TIMESTAMP_NORMALIZATION_FACTOR),
-      limit: MAX_TRANSACTIONS_PER_TIMESTAMP,
-      order: 'desc'
-    });
-    if (outboundTxns.length) {
-      let highestNonce = outboundTxns.reduce((accumulator, txn) => {
+    let normalizedTimestamp = Math.floor(lastProcessedTimestamp / TIMESTAMP_NORMALIZATION_FACTOR);
+
+    let [oldOutboundTxns, lastProcessedBlock] = await Promise.all([
+      this.channel.invoke(`${this.moduleAlias}:getOutboundTransactions`, {
+        walletAddress: this.multisigWalletAddressBase32,
+        fromTimestamp: normalizedTimestamp,
+        limit: MAX_TRANSACTIONS_PER_TIMESTAMP,
+        order: 'desc'
+      }),
+      this.channel.invoke(`${this.moduleAlias}:getLastBlockAtTimestamp`, {
+        timestamp: normalizedTimestamp
+      })
+    ]);
+
+    if (oldOutboundTxns.length) {
+      let highestNonce = oldOutboundTxns.reduce((accumulator, txn) => {
         let txnNonce = BigInt(txn.nonce);
         if (txnNonce > accumulator) {
           return txnNonce;
@@ -89,6 +102,38 @@ class LiskChainCrypto {
       this.nonceIndex = highestNonce + 1n;
     } else {
       this.nonceIndex = this.initialAccountNonce;
+    }
+
+    let newBlockMap = new Map();
+    let currentHeight = lastProcessedBlock.height;
+    while (newBlockMap.size < this.blocksLookAheadMaxCount) {
+      let newBlocks = await this.channel.invoke(`${this.moduleAlias}:getBlocksBetweenHeights`, {
+        fromHeight: currentHeight,
+        limit: API_BLOCK_FETCH_LIMIT
+      });
+      if (!newBlocks.length) {
+        break;
+      }
+      for (let block of newBlocks) {
+        newBlockMap.set(block.height, block);
+        currentHeight = block.height;
+      }
+    }
+
+    this.recentNoncesMap = new Map();
+
+    for (let block of newBlockMap.values()) {
+      if (block.numberOfTransactions === 0) {
+        continue;
+      }
+      let newOutboundTxns = await this.channel.invoke(`${this.moduleAlias}:getOutboundTransactionsFromBlock`, {
+        walletAddress: this.multisigWalletAddressBase32,
+        blockId: block.id
+      });
+      for (let txn of newOutboundTxns) {
+        let recentNonceKey = this._computeTradeId(txn);
+        this.recentNoncesMap.set(recentNonceKey, BigInt(txn.nonce));
+      }
     }
   }
 
@@ -139,7 +184,7 @@ class LiskChainCrypto {
       );
     }
 
-    let nonce = this.nonceIndex++;
+    let nonce = this._getNextNonce(transactionData);
 
     let txnData = {
       moduleID: 2,
@@ -197,6 +242,27 @@ class LiskChainCrypto {
     };
 
     return {transaction: preparedTxn, signature: multisigTxnSignature};
+  }
+
+  _computeTradeId(transactionData) {
+    return `${transactionData.recipientAddress},${transactionData.message}`;
+  }
+
+  _getNextNonce(transactionData) {
+    let tradeId = this._computeTradeId(transactionData);
+    let existingNonce = this.recentNoncesMap.get(tradeId);
+
+    if (existingNonce == null) {
+      this.recentNoncesMap.set(tradeId, this.nonceIndex);
+      while (this.recentNoncesMap.size > this.recentNoncesMaxCount) {
+        let nextKey = this.recentNoncesMap.keys().next().value;
+        this.recentNoncesMap.delete(nextKey);
+      }
+    } else {
+      this.nonceIndex = existingNonce;
+    }
+
+    return this.nonceIndex++;
   }
 }
 
