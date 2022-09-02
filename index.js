@@ -8,7 +8,6 @@ const crypto = require('crypto');
 const LiskWSClient = require('lisk-v3-ws-client-manager');
 
 const DEX_TRANSACTION_ID_LENGTH = 44;
-const TIMESTAMP_NORMALIZATION_FACTOR = 1000;
 const DEFAULT_RECENT_NONCES_MAX_COUNT = 10000;
 const MAX_TRANSACTIONS_PER_TIMESTAMP = 100;
 const API_BLOCK_FETCH_LIMIT = 50;
@@ -56,7 +55,7 @@ class LiskChainCrypto {
     });
   }
 
-  async load(channel, lastProcessedTimestamp) {
+  async load(channel, lastProcessedHeight) {
     this.channel = channel;
     this.apiClient = await this.liskWsClient.createWsClient(true);
     this.networkIdBytes = toBuffer(this.apiClient._nodeInfo.networkIdentifier);
@@ -69,27 +68,24 @@ class LiskChainCrypto {
     this.multisigWalletKeys = account.keys;
     this.initialAccountNonce = account.sequence.nonce;
 
-    await this.reset(lastProcessedTimestamp);
+    await this.reset(lastProcessedHeight);
   }
 
   async unload() {
     await this.liskWsClient.close();
   }
 
-  async reset(lastProcessedTimestamp) {
-    let normalizedTimestamp = Math.floor(lastProcessedTimestamp / TIMESTAMP_NORMALIZATION_FACTOR);
+  async reset(lastProcessedHeight) {
+    let lastProcessedBlock = await this.channel.invoke(`${this.moduleAlias}:getBlockAtHeight`, {
+      height: lastProcessedHeight
+    });
 
-    let [oldOutboundTxns, lastProcessedBlock] = await Promise.all([
-      this.channel.invoke(`${this.moduleAlias}:getOutboundTransactions`, {
-        walletAddress: this.multisigWalletAddressBase32,
-        fromTimestamp: normalizedTimestamp,
-        limit: MAX_TRANSACTIONS_PER_TIMESTAMP,
-        order: 'desc'
-      }),
-      this.channel.invoke(`${this.moduleAlias}:getLastBlockAtTimestamp`, {
-        timestamp: normalizedTimestamp
-      })
-    ]);
+    let oldOutboundTxns = await this.channel.invoke(`${this.moduleAlias}:getOutboundTransactions`, {
+      walletAddress: this.multisigWalletAddressBase32,
+      fromTimestamp: lastProcessedBlock.timestamp,
+      limit: MAX_TRANSACTIONS_PER_TIMESTAMP,
+      order: 'desc'
+    });
 
     if (oldOutboundTxns.length) {
       let highestNonce = oldOutboundTxns.reduce((accumulator, txn) => {
