@@ -16,7 +16,7 @@ describe('DEX (ChainCrypto) API tests', async () => {
         sharedPassphrase: 'original wolf grass seed excite current write castle lab brain hawk bless',
         passphrase: 'tell sun crazy time creek carbon cloud various turtle leisure cactus melody',
         keyIndexDirPath: './test/data/',
-        rpcURL: 'ws://216.128.135.183:8080/ws'
+        serviceURL: 'https://service.lisk.com'
       },
       store: {
         saveItem: async (key, value) => {
@@ -28,6 +28,7 @@ describe('DEX (ChainCrypto) API tests', async () => {
       }
     };
     chainCrypto = new LiskChainCrypto(options);
+    chainCrypto.reset = () => { chainCrypto.nonceIndex = 1n };
     await chainCrypto.load();
   });
 
@@ -39,7 +40,7 @@ describe('DEX (ChainCrypto) API tests', async () => {
 
     it('should prepare and sign transaction and return transaction and signature objects with all required properties', async () => {
       let { transaction, signature } = await chainCrypto.prepareTransaction({
-        recipientAddress: '213818552997703753L',
+        recipientAddress: 'lskrhqvvvsh9st2e9z7rk9xoecwwqso395fg5pfnb',
         amount: '10000000000',
         fee: '10000000',
         timestamp: 1609544665,
@@ -69,7 +70,7 @@ describe('DEX (ChainCrypto) API tests', async () => {
 
     beforeEach(async () => {
       let { transaction, signature } = await chainCrypto.prepareTransaction({
-        recipientAddress: '213818552997703753L',
+        recipientAddress: 'lskrhqvvvsh9st2e9z7rk9xoecwwqso395fg5pfnb',
         amount: '10000000000',
         fee: '10000000',
         timestamp: 1609544665,
@@ -91,7 +92,7 @@ describe('DEX (ChainCrypto) API tests', async () => {
     });
 
     it('should return false if the signature is valid but does not belong to the correct account', async () => {
-      signaturePacket.signerAddress = '213818552997703753L';
+      signaturePacket.signerAddress = 'lskrhqvvvsh9st2e9z7rk9xoecwwqso395fg5pfnb';
       let isValid = await chainCrypto.verifyTransactionSignature(preparedTxn, signaturePacket);
       assert.equal(isValid, false);
     });
