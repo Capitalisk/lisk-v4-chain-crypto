@@ -1,2 +1,2 @@
-# lisk-v3-chain-crypto
-Lisk DEX ChainCrypto plugin for Lisk v3
+# lisk-v4-chain-crypto
+Lisk DEX ChainCrypto plugin for Lisk v4
